@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Custom Code Editor</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Consolas', 'Courier New', monospace;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+        }
+        #toolbar {
+            background-color: #333;
+            padding: 10px;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        #toolbar button, #toolbar label {
+            background-color: #444;
+            border: none;
+            padding: 10px 20px;
+            color: #d4d4d4;
+            font-size: 14px;
+            cursor: pointer;
+            margin: 5px;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        #toolbar button:hover, #toolbar label:hover {
+            background-color: #555;
+        }
+        #toolbar input[type="file"] {
+            display: none;
+        }
+        #tabs {
+            display: flex;
+            background-color: #2d2d2d;
+            border-bottom: 1px solid #444;
+        }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            background-color: #333;
+            color: #d4d4d4;
+            border-right: 1px solid #444;
+            display: flex;
+            align-items: center;
+        }
+        .tab.active {
+            background-color: #444;
+        }
+        .tab span {
+            margin-left: 10px;
+            color: #FF0000;
+            cursor: pointer;
+        }
+        #editor-container {
+            position: relative;
+            width: 100%;
+            height: 85vh;
+        }
+        .editor {
+            width: 100%;
+            height: 100%;
+            background-color: #1e1e1e;
+            color: #00FF00;
+            border: none;
+            padding: 20px;
+            font-size: 14px;
+            line-height: 1.5;
+            outline: none;
+            resize: none;
+            white-space: pre;
+            overflow-wrap: normal;
+            overflow-x: auto;
+            position: absolute;
+            top: 0;
+            left: 0;
+            display: none;
+        }
+        .editor.active {
+            display: block;
+        }
+        #terminal {
+            display: none;
+            padding: 20px;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            height: 85vh;
+            overflow-y: auto;
+        }
+        #terminal.active {
+            display: block;
+        }
+        #terminal-output {
+            white-space: pre-wrap;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #333;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+        }
+        .modal.active {
+            display: block;
+        }
+        .modal input, .modal button {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            border: none;
+        }
+        .modal button {
+            background-color: #444;
+            color: #d4d4d4;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .modal button:hover {
+            background-color: #555;
+        }
+        .command-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 5px 0;
+            background-color: #444;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .command-item span {
+            margin-right: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="toolbar">
+        <label for="fileInput">Open File</label>
+        <input type="file" id="fileInput">
+        <button onclick="saveContent()">Save</button>
+        <button onclick="undo()">Undo</button>
+        <button onclick="redo()">Redo</button>
+        <button onclick="clearEditor()">Clear</button>
+        <button onclick="findText()">Find</button>
+        <button onclick="openTerminal()">RED.1v</button>
+        <button onclick="openCommands()">Change Terminal</button>
+    </div>
+    <div id="tabs">
+        <div class="tab active" onclick="switchTab(0)">
+            Tab 1<span onclick="closeTab(event, 0)">X</span>
+        </div>
+        <div class="tab" onclick="addTab()">+</div>
+    </div>
+    <div id="editor-container">
+        <textarea id="editor0" class="editor active"></textarea>
+        <div id="terminal" class="editor">
+            <div id="terminal-output"></div>
+            <input id="command-input" type="text" onkeydown="handleCommand(event)" placeholder="Type a command...">
+        </div>
+    </div>
+
+    <div id="new-cmd-modal" class="modal">
+        <h3>Create New Command</h3>
+        <input id="cmd-name" type="text" placeholder="Command Name">
+        <input id="cmd-output" type="text" placeholder="Command Output">
+        <button onclick="saveNewCommand()">Save Command</button>
+        <button onclick="closeModal('new-cmd-modal')">Close</button>
+    </div>
+
+    <div id="cmds-modal" class="modal">
+        <h3>Terminal (Default & CSST)</h3>
+        <div id="cmds-list"></div>
+        <button onclick="closeModal('cmds-modal')">Close</button>
+    </div>
+
+    <script>
+        const editors = [document.getElementById('editor0')];
+        const terminal = document.getElementById('terminal');
+        const terminalOutput = document.getElementById('terminal-output');
+        const commandInput = document.getElementById('command-input');
+        let activeTab = 0;
+        const undoStack = [[]];
+        const redoStack = [[]];
+        const commands = JSON.parse(localStorage.getItem('commands')) || {};
+
+        // Load saved content from local storage
+        if (localStorage.getItem('savedContent0')) {
+            editors[0].value = localStorage.getItem('savedContent0');
+        }
+
+        // Automatically save content to local storage on input
+        editors[0].addEventListener('input', () => {
+            localStorage.setItem('savedContent0', editors[0].value);
+            undoStack[0].push(editors[0].value);
+            redoStack[0] = [];
+        });
+
+        function saveContent() {
+            const blob = new Blob([editors[activeTab].value], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'code.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        document.getElementById('fileInput').addEventListener('change', function() {
+            const file = this.files[0];
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                addTab(file.name, e.target.result);
+            };
+            reader.readAsText(file);
+        });
+
+        function undo() {
+            if (undoStack[activeTab].length > 0) {
+                redoStack[activeTab].push(editors[activeTab].value);
+                editors[activeTab].value = undoStack[activeTab].pop();
+                localStorage.setItem(`savedContent${activeTab}`, editors[activeTab].value);
+            }
+        }
+
+        function redo() {
+            if (redoStack[activeTab].length > 0) {
+                undoStack[activeTab].push(editors[activeTab].value);
+                editors[activeTab].value = redoStack[activeTab].pop();
+                localStorage.setItem(`savedContent${activeTab}`, editors[activeTab].value);
+            }
+        }
+
+        function clearEditor() {
+            if (confirm('Are you sure you want to clear the editor?')) {
+                undoStack[activeTab].push(editors[activeTab].value);
+                editors[activeTab].value = '';
+                localStorage.setItem(`savedContent${activeTab}`, editors[activeTab].value);
+            }
+        }
+
+        function findText() {
+            const query = prompt('Enter text to find:');
+            if (query) {
+                const startIndex = editors[activeTab].value.indexOf(query);
+                if (startIndex !== -1) {
+                    editors[activeTab].focus();
+                    editors[activeTab].setSelectionRange(startIndex, startIndex + query.length);
+                } else {
+                    alert('Text not found.');
+                }
+            }
+        }
+
+        function addTab(fileName = null, fileContent = null) {
+            const newIndex = editors.length;
+            const newTab = document.createElement('div');
+            newTab.className = 'tab';
+            newTab.innerHTML = `${fileName ? fileName : `Tab ${newIndex + 1}`}<span onclick="closeTab(event, ${newIndex})">X</span>`;
+            newTab.onclick = () => switchTab(newIndex);
+            document.getElementById('tabs').insertBefore(newTab, document.getElementById('tabs').lastElementChild);
+
+            const newEditor = document.createElement('textarea');
+            newEditor.id = `editor${newIndex}`;
+            newEditor.className = 'editor';
+            if (fileContent !== null) {
+                newEditor.value = fileContent;
+                localStorage.setItem(`savedContent${newIndex}`, fileContent);
+            } else if (localStorage.getItem(`savedContent${newIndex}`)) {
+                newEditor.value = localStorage.getItem(`savedContent${newIndex}`);
+            }
+
+            newEditor.addEventListener('input', () => {
+                localStorage.setItem(`savedContent${newIndex}`, newEditor.value);
+                undoStack[newIndex].push(newEditor.value);
+                redoStack[newIndex] = [];
+            });
+
+            document.getElementById('editor-container').appendChild(newEditor);
+
+            editors.push(newEditor);
+            undoStack.push([]);
+            redoStack.push([]);
+
+            switchTab(newIndex);
+        }
+
+        function switchTab(index) {
+            document.querySelector('.tab.active').classList.remove('active');
+            document.querySelector('.editor.active').classList.remove('active');
+
+            document.querySelectorAll('.tab')[index].classList.add('active');
+            editors[index].classList.add('active');
+
+            activeTab = index;
+        }
+
+        function closeTab(event, index) {
+            event.stopPropagation();
+            if (confirm('Are you sure you want to close this tab?')) {
+                document.querySelectorAll('.tab')[index].remove();
+                editors[index].remove();
+
+                editors.splice(index, 1);
+                undoStack.splice(index, 1);
+                redoStack.splice(index, 1);
+
+                for (let i = index; i < editors.length; i++) {
+                    const tab = document.querySelectorAll('.tab')[i];
+                    tab.innerHTML = `${localStorage.getItem(`savedContent${i}`) ? localStorage.getItem(`savedContent${i}`) : `Tab ${i + 1}`}<span onclick="closeTab(event, ${i})">X</span>`;
+                    tab.onclick = () => switchTab(i);
+                    editors[i].id = `editor${i}`;
+                }
+
+                if (editors.length > 0) {
+                    switchTab(index === 0 ? 0 : index - 1);
+                } else {
+                    addTab();
+                }
+            }
+        }
+
+        function openTerminal() {
+            const terminalTab = document.querySelector('.tab[data-tab="terminal"]');
+            if (terminalTab) {
+                switchTab(parseInt(terminalTab.dataset.index));
+            } else {
+                addTab('Terminal');
+                const terminalIndex = editors.length - 1;
+                const terminalTab = document.querySelectorAll('.tab')[terminalIndex];
+                terminalTab.dataset.tab = 'terminal';
+                terminalTab.dataset.index = terminalIndex;
+                switchTab(terminalIndex);
+                terminal.classList.add('active');
+                terminal.dataset.index = terminalIndex;
+                editors[terminalIndex].style.display = 'none';
+            }
+        }
+
+        function handleCommand(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                const command = commandInput.value.trim();
+                commandInput.value = '';
+                const commandOutput = commands[command] || `${command}: command not found`;
+                terminalOutput.innerHTML += `A:\\red.1v\\user\\vende>  ${command}\n${commandOutput}\n`;
+                terminal.scrollTop = terminal.scrollHeight;
+
+                if (command === 'cmd') {
+                    openModal('new-cmd-modal');
+                }
+            }
+        }
+
+        function openModal(modalId) {
+            document.getElementById(modalId).classList.add('active');
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+        }
+
+        function saveNewCommand() {
+            const cmdName = document.getElementById('cmd-name').value.trim();
+            const cmdOutput = document.getElementById('cmd-output').value.trim();
+
+            if (cmdName && cmdOutput) {
+                commands[cmdName] = cmdOutput;
+                localStorage.setItem('commands', JSON.stringify(commands));
+                closeModal('new-cmd-modal');
+            } else {
+                alert('Please fill in both fields.');
+            }
+        }
+
+        function openCommands() {
+            const cmdsList = document.getElementById('cmds-list');
+            cmdsList.innerHTML = '';
+
+            for (const [cmdName, cmdOutput] of Object.entries(commands)) {
+                const cmdItem = document.createElement('div');
+                cmdItem.className = 'command-item';
+                cmdItem.innerHTML = `
+                    ${cmdName}
+                    <span onclick="editCommand('${cmdName}')">✏️</span>
+                    <span onclick="deleteCommand('${cmdName}')">🗑️</span>
+                `;
+                cmdsList.appendChild(cmdItem);
+            }
+
+            openModal('cmds-modal');
+        }
+
+        function editCommand(cmdName) {
+            const newOutput = prompt('Edit command output:', commands[cmdName]);
+            if (newOutput !== null) {
+                commands[cmdName] = newOutput;
+                localStorage.setItem('commands', JSON.stringify(commands));
+                openCommands();
+            }
+        }
+
+        function deleteCommand(cmdName) {
+            if (confirm('Are you sure you want to delete this command?')) {
+                delete commands[cmdName];
+                localStorage.setItem('commands', JSON.stringify(commands));
+                openCommands();
+            }
+        }
+    </script>
+</body>
+</html>
